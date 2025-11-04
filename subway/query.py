@@ -86,12 +86,27 @@ class DebugLogger:
         content = f"Error Type: {type(error).__name__}\nError Message: {str(error)}"
         self._add_section("ERROR", content)
 
+    def log_latency(self, iteration: int, api_latency: float) -> None:
+        """Log API call latency."""
+        content = f"Iteration: {iteration}\nAPI Latency: {api_latency:.3f} seconds"
+        self._add_section("LATENCY", content)
+
+    def log_total_latency(self, total_latency: float, query: str, lat: Optional[str], lon: Optional[str]) -> None:
+        """Log total query resolution latency."""
+        content = (
+            f"Total Resolution Time: {total_latency:.3f} seconds\n"
+            f"Query: {query[:100] if query else '(empty)'}\n"
+            f"Latitude: {lat}\n"
+            f"Longitude: {lon}"
+        )
+        self._add_section("TOTAL LATENCY", content)
+
     def write(self) -> None:
         """Write all sections to the debug file."""
         try:
             with open(self.log_file, "w", encoding="utf-8") as f:
                 f.write("".join(self.sections))
-            logger.info("Debug log written to: %s", self.log_file)
+            logger.debug("Debug log written to: %s", self.log_file)
         except Exception as exc:
             logger.error("Failed to write debug log: %s", exc)
 
@@ -107,31 +122,53 @@ class ClaudeQueryResolver:
     """Uses the Claude Agent SDK with tool-calling to answer subway arrival questions."""
 
     SYSTEM_PROMPT = (
-        "You help riders find NYC subway trains. Given stops.txt CSV, map queries to stop IDs.\n"
+        "You are an assistant that helps riders find upcoming trains at NYC subway stations.\n"
+        "You are given a subset of MTA stops.txt CSV so you can map natural-language station references to stop IDs.\n"
         "\n"
-        "If query is unrelated to trains, respond: {\"status\":\"ok\",\"message\":\"This is not what I'm meant to do!\"}\n"
+        "IMPORTANT: If the user's query is unrelated to finding train times at NYC subway stations, "
+        "respond with status \"ok\" and message \"This is not what I'm meant to do!\"\n"
         "\n"
-        "Steps:\n"
-        "1. Identify relevant stop IDs from CSV\n"
-        "2. Call get_realtime_stop_data ONCE with ALL stop IDs as array: ['R20N','R20S','L03N','L03S']\n"
-        "3. Parse JSON 'stops' array with 'trains' grouped by route/destination\n"
-        "4. Return pure JSON (no markdown):\n"
-        "   {\"status\":\"ok\"|\"clarify\",\"message\":string|null,\"clarification\":string|null}\n"
+        "Workflow:\n"
+        "1. First, check if the query is about NYC subway train times. If not, reject it with the message above.\n"
+        "2. Read the user's request and locate the most likely stop IDs within the CSV (parent or child stop IDs).\n"
+        "3. Call the `get_realtime_stop_data` tool ONCE with ALL the stop IDs you need as a list.\n"
+        "   - IMPORTANT: Pass ALL stop IDs for a station in a single tool call (e.g., ['R20N', 'R20S', 'L03N', 'L03S']).\n"
+        "   - This is much more efficient than making multiple separate tool calls.\n"
+        "   - The tool fetches all stops concurrently and returns aggregated results.\n"
+        "4. Parse the returned JSON which contains a 'stops' array with train data for each stop.\n"
+        "   Each stop has a 'trains' array grouped by route and destination, with 'arrivals' sorted by time.\n"
+        "5. Respond with ONLY raw JSON - no markdown formatting, no code blocks, no additional text.\n"
+        "   Your response must be pure JSON matching this exact schema:\n"
+        "   {\n"
+        "     \"status\": \"ok\" | \"clarify\",\n"
+        "     \"message\": string | null,\n"
+        "     \"clarification\": string | null\n"
+        "   }\n"
         "\n"
-        "status=\"clarify\" if need more info, else \"ok\" with concise train summary (3-4 trains)."
+        "CRITICAL: Do NOT wrap your JSON in markdown code blocks or prepend it with \"json\" or any other text.\n"
+        "Your ENTIRE response must be valid JSON that starts with { and ends with }.\n"
+        "\n"
+        "If you need more information from the rider, set status to \"clarify\" and include a follow-up question. "
+        "Otherwise set status to \"ok\" and place your formatted rider-facing summary in `message`.\n"
+        "Keep the summary concise (3-4 upcoming trains)."
     )
 
     TOOL_DEFINITION = [
         {
             "name": "get_realtime_stop_data",
-            "description": "Fetch real-time trains for NYC stop IDs. Pass all IDs as array: ['R20N','R20S']",
+            "description": (
+                "Fetch real-time arrival data for one or more NYC subway stop IDs using the RealTimeRail API. "
+                "You can provide a single stop ID or a list of stop IDs. "
+                "When multiple stop IDs are provided, all data is fetched concurrently for efficiency. "
+                "Examples: 'D20', ['D20N', '635S'], ['R20N', 'R20S', 'L03N', 'L03S']"
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "stop_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Stop IDs from stops.txt",
+                        "description": "List of NYC subway stop identifiers from stops.txt. Use all stop IDs for a station to see all train arrivals.",
                     }
                 },
                 "required": ["stop_ids"],
@@ -144,7 +181,7 @@ class ClaudeQueryResolver:
         realtime_client: RealtimeRailClient,
         *,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-5",
+        model: str = "claude-haiku-4-5",
         temperature: float = 0.1,
         max_tokens: int = 1024,  # Reduced from 2048 - responses are typically short
         max_tool_iterations: int = 10,
@@ -504,11 +541,14 @@ class ClaudeQueryResolver:
 
                         # Calculate and log latency
                         api_latency = time.time() - api_start_time
-                        logger.info(
-                            "Claude API latency: %.2f seconds (iteration %d)",
+                        logger.debug(
+                            "Claude API latency: %.3f seconds (iteration %d)",
                             api_latency,
                             iteration + 1
                         )
+
+                        # Log to debug file
+                        debug_log.log_latency(iteration + 1, api_latency)
 
                         break  # Success, exit retry loop
                     except RateLimitError:
@@ -618,17 +658,20 @@ class ClaudeQueryResolver:
 
                 # Log parsed result
                 debug_log.log_parsed_result(status, message, clarification)
-                debug_log.write()
 
                 # Log total resolution time
                 total_latency = time.time() - resolve_start_time
-                logger.info(
-                    "Total query resolution time: %.2f seconds (query='%s', lat=%s, lon=%s)",
+                logger.debug(
+                    "Total query resolution time: %.3f seconds (query='%s', lat=%s, lon=%s)",
                     total_latency,
                     query[:50] if query else "",
                     lat,
                     lon
                 )
+
+                # Log to debug file
+                debug_log.log_total_latency(total_latency, query, lat, lon)
+                debug_log.write()
 
                 return ResolverResult(status=status, message=message, clarification=clarification)
 

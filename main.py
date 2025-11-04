@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Any, Dict, Optional
+import os
 
 import httpx
 from fastapi import FastAPI
@@ -14,7 +15,8 @@ from subway.service import QueryOutcome, process_subway_query
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("telegram-bot")
 
-TELEGRAM_BOT_TOKEN = "8180821757:AAEIbhpmgXnCHQENFWBM8cgcnceHN_a6lDk"
+TELEGRAM_BOT_TOKEN = os.getenv(
+    "TELEGRAM_BOT_TOKEN", "8180821757:AAEIbhpmgXnCHQENFWBM8cgcnceHN_a6lDk")
 TELEGRAM_API_BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 app = FastAPI(title="Subway Telegram Bot", version="0.6.0")
@@ -224,7 +226,8 @@ async def _handle_command(chat_id: int, command: str) -> None:
 
         if home_location:
             # User has saved home - query with saved location
-            logger.info("User %s requested home, using saved location: %s", chat_id, home_location)
+            logger.info(
+                "User %s requested home, using saved location: %s", chat_id, home_location)
             lat = home_location["lat"]
             lon = home_location["lon"]
 
@@ -235,7 +238,8 @@ async def _handle_command(chat_id: int, command: str) -> None:
             await _send_telegram_message(chat_id, reply)
         else:
             # User doesn't have saved home - prompt to share location
-            logger.info("User %s requested home but no saved location, prompting to set", chat_id)
+            logger.info(
+                "User %s requested home but no saved location, prompting to set", chat_id)
             _setting_home_mode.add(chat_id)
 
             await _send_telegram_message_with_location_button(
