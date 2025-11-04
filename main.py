@@ -217,7 +217,7 @@ async def _handle_command(chat_id: int, command: str) -> None:
     """Handle slash commands."""
     if command == "/hello" or command == "/start":
         welcome_message = (
-            "🚇 Welcome to the NYC Subway Bot!\n\n"
+            "🚇 Welcome to the **NYC** Subway Bot!\n\n"
             "I help you find upcoming trains at NYC subway stations.\n\n"
             "How to use:\n"
             "• Type any station name (e.g., \"Union Square\", \"Times Square\")\n"
@@ -342,6 +342,7 @@ async def _send_telegram_message_plain(chat_id: int, text: str) -> None:
     payload = {
         "chat_id": chat_id,
         "text": text,
+        "parse_mode": "HTML"
     }
 
     try:
@@ -379,7 +380,8 @@ async def _send_telegram_message(chat_id: int, text: str) -> None:
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "reply_markup": inline_keyboard
+        "reply_markup": inline_keyboard,
+        "parse_mode": "HTML"
     }
 
     try:
@@ -415,7 +417,8 @@ async def _send_telegram_message_with_location_button(chat_id: int, text: str) -
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "reply_markup": reply_keyboard
+        "reply_markup": reply_keyboard,
+        "parse_mode": "HTML"
     }
 
     try:

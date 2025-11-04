@@ -128,46 +128,72 @@ class ClaudeQueryResolver:
         "IMPORTANT: If the user's query is unrelated to finding train times at NYC subway stations, "
         "respond with status \"ok\" and message \"This is not what I'm meant to do!\"\n"
         "\n"
+        "CRITICAL RULE: If you find at least ONE matching stop in the CSV, fetch ALL matching stops.\n"
+        "NEVER ask which station to choose if multiple stations match - just fetch ALL of them.\n"
+        "ONLY ask for clarification (status \"clarify\") if you cannot find ANY matching stops in the CSV.\n"
+        "\n"
         "Workflow:\n"
         "1. First, check if the query is about NYC subway train times. If not, reject it with the message above.\n"
-        "2. Read the user's request and locate the most likely stop IDs within the CSV (parent or child stop IDs).\n"
-        "3. Call the `get_realtime_stop_data` tool ONCE with ALL the stop IDs you need as a list.\n"
-        "   - IMPORTANT: Pass ALL stop IDs for a station in a single tool call (e.g., ['R20N', 'R20S', 'L03N', 'L03S']).\n"
+        "2. Read the user's request and locate ALL matching stop IDs within the CSV (parent or child stop IDs).\n"
+        "   - If the query is empty or vague, use ALL stops in the provided CSV.\n"
+        "   - If the query matches one or more stations, use ALL matching stations.\n"
+        "   - If NO stops match at all, ONLY THEN use status \"clarify\" to ask for more information.\n"
+        "   - If at least one stop matches, proceed to step 3 (do NOT ask for clarification).\n"
+        "3. Call the `get_realtime_stop_data` tool ONCE with ALL the stop IDs you found as a list.\n"
+        "   - IMPORTANT: Pass ALL stop IDs for all matching stations in a single tool call.\n"
+        "   - Example: ['234N', '234S', 'A42N', 'A42S', 'R30N', 'R30S', '233N', '233S']\n"
         "   - This is much more efficient than making multiple separate tool calls.\n"
         "   - The tool fetches all stops concurrently and returns aggregated results.\n"
         "4. Parse the returned JSON which contains a 'stops' array with train data for each stop.\n"
         "   Each stop has a 'trains' array grouped by route and destination, with 'arrivals' sorted by time.\n"
         "5. Format the response using this EXACT format:\n"
         "\n"
-        "   Station Name:\n"
+        "   📍 <b>Station Name</b>\n"
+        "   [Direction Name] (Destination):\n"
+        "   • [Route]: [time1], [time2], [time3]\n"
+        "   • [Route]: [time1], [time2]\n"
         "\n"
-        "   Northbound:\n"
-        "   • [Route] to [Destination] - [X min or \"arriving now\"]\n"
-        "   • [Route] to [Destination] - [X min or \"arriving now\"]\n"
-        "\n"
-        "   Southbound:\n"
-        "   • [Route] to [Destination] - [X min or \"arriving now\"]\n"
-        "   • [Route] to [Destination] - [X min or \"arriving now\"]\n"
+        "   [Direction Name] (Destination):\n"
+        "   • [Route]: [time1], [time2]\n"
+        "   • [Route]: [time1]\n"
         "\n"
         "   Example:\n"
-        "   Hoyt-Schermerhorn Sts:\n"
+        "   📍 <b>Hoyt-Schermerhorn Sts</b>\n"
+        "   Northbound (Manhattan):\n"
+        "   • A: 2m, 15m\n"
+        "   • C: 7m, 22m\n"
+        "   • G: 5m, 17m\n"
         "\n"
-        "   Northbound:\n"
-        "   • C to 168 St - 2 min\n"
-        "   • G to Court Sq - 7 min\n"
-        "   • A to Inwood-207 St - 17 min\n"
-        "\n"
-        "   Southbound:\n"
-        "   • G to Church Av - arriving now\n"
-        "   • A to Far Rockaway - 4 min\n"
-        "   • C to Euclid Av - 5 min\n"
+        "   Southbound (Brooklyn):\n"
+        "   • A: now, 14m\n"
+        "   • C: 4m, 16m\n"
+        "   • G: <1m, 12m\n"
         "\n"
         "   Rules:\n"
-        "   - Show 3-4 trains per direction\n"
-        "   - Use \"arriving now\" for trains arriving in 0-1 minutes\n"
-        "   - Use \"X min\" for all other trains\n"
-        "   - Group by Northbound/Southbound (or appropriate direction names)\n"
-        "   - Sort by arrival time (earliest first)\n"
+        "   - Add 📍 emoji before the station name\n"
+        "   - Make the station name bold using HTML tags: <b>Station Name</b>\n"
+        "   - CRITICAL: Group ALL trains by their direction first (Northbound, Southbound, Eastbound, Westbound, etc.)\n"
+        "     * All Northbound trains should be under the \"Northbound:\" section, regardless of destination\n"
+        "     * All Southbound trains should be under the \"Southbound:\" section, regardless of destination\n"
+        "     * This reduces user cognitive overhead by organizing trains by direction\n"
+        "   - Add general destination in parentheses after each direction name:\n"
+        "     * Format: \"Northbound (Manhattan):\" or \"Southbound (Brooklyn):\"\n"
+        "     * Use general borough/area names: Manhattan, Brooklyn, Queens, Bronx, Uptown, Downtown\n"
+        "     * This gives riders a general sense of where trains are heading\n"
+        "     * Infer from the train destinations in the data which general area they're going to\n"
+        "   - Within each direction section, group trains by ROUTE (train name) ONLY, NOT by destination\n"
+        "     * All A trains going Northbound should be on one line, regardless of their final destination\n"
+        "     * All C trains going Southbound should be on one line, regardless of their final destination\n"
+        "     * Example: \"• A: 2m, 5m, 17m\" groups all A train arrivals together\n"
+        "   - IMPORTANT: Sort routes ALPHABETICALLY within each direction (A before C before G)\n"
+        "   - Show multiple arrival times for the same route as comma-separated times\n"
+        "   - Show up to 3 trains per train route (omit any additional arrivals beyond 3)\n"
+        "   - Time formatting:\n"
+        "     * Use \"now\" for trains arriving in less than 15 seconds\n"
+        "     * Use \"<1m\" for trains arriving in 15 seconds to 59 seconds\n"
+        "     * Use \"Xm\" (no space) for trains arriving in 1 minute or more (e.g., \"2m\", \"15m\")\n"
+        "   - Use the actual direction names from the data (Northbound, Southbound, Eastbound, Westbound, etc.)\n"
+        "   - If multiple stations are shown, separate each station with a blank line\n"
         "\n"
         "6. Respond with ONLY raw JSON - no markdown formatting, no code blocks, no additional text.\n"
         "   Your response must be pure JSON matching this exact schema:\n"
@@ -177,11 +203,11 @@ class ClaudeQueryResolver:
         "     \"clarification\": string | null\n"
         "   }\n"
         "\n"
-        "CRITICAL: Do NOT wrap your JSON in markdown code blocks or prepend it with \"json\" or any other text.\n"
-        "Your ENTIRE response must be valid JSON that starts with { and ends with }.\n"
+        "   - Use status \"ok\" when you have fetched and formatted train data successfully.\n"
+        "   - Use status \"clarify\" ONLY when you cannot find ANY matching stops in the CSV.\n"
         "\n"
-        "If you need more information from the rider, set status to \"clarify\" and include a follow-up question. "
-        "Otherwise set status to \"ok\" and place your formatted rider-facing summary in `message`."
+        "CRITICAL: Do NOT wrap your JSON in markdown code blocks or prepend it with \"json\" or any other text.\n"
+        "Your ENTIRE response must be valid JSON that starts with { and ends with }."
     )
 
     TOOL_DEFINITION = [
@@ -261,6 +287,9 @@ class ClaudeQueryResolver:
         Filter stops.txt to only include stops within max_distance_km of the given coordinates.
         If more than max_stops are found, returns only the closest ones.
 
+        SPECIAL RULE: If any stops are within 50 meters (0.05 km), ONLY return those stops
+        and ignore all others. This prioritizes very nearby stations.
+
         IMPORTANT: All stop IDs with the same stop name are kept together.
         The limit is applied at the stop name level, not individual stop IDs.
         Returns a filtered CSV string.
@@ -277,6 +306,7 @@ class ClaudeQueryResolver:
 
         # Parse and collect stops with their distances, grouped by name
         stops_by_name = {}  # stop_name -> [(distance, row), ...]
+        very_close_stops = {}  # Stops within 50 meters
         reader = csv.DictReader(lines)
         for row in reader:
             try:
@@ -286,7 +316,13 @@ class ClaudeQueryResolver:
                 distance = self._haversine_distance(
                     lat, lon, stop_lat, stop_lon)
 
-                if distance <= max_distance_km:
+                # Check if within 50 meters (0.05 km)
+                if distance <= 0.05:
+                    stop_name = row["stop_name"]
+                    if stop_name not in very_close_stops:
+                        very_close_stops[stop_name] = []
+                    very_close_stops[stop_name].append((distance, row))
+                elif distance <= max_distance_km:
                     stop_name = row["stop_name"]
                     if stop_name not in stops_by_name:
                         stops_by_name[stop_name] = []
@@ -295,14 +331,22 @@ class ClaudeQueryResolver:
                 # Skip malformed rows
                 continue
 
+        # If we have very close stops (within 50m), use ONLY those
+        if very_close_stops:
+            logger.info("Found %d stations within 50 meters, ignoring all others",
+                        len(very_close_stops))
+            stops_to_use = very_close_stops
+        else:
+            stops_to_use = stops_by_name
+
         # Sort stop names by their closest stop's distance
         sorted_stop_names = sorted(
-            stops_by_name.keys(),
-            key=lambda name: min(dist for dist, _ in stops_by_name[name])
+            stops_to_use.keys(),
+            key=lambda name: min(dist for dist, _ in stops_to_use[name])
         )
 
-        # Apply limit at the stop name level
-        if len(sorted_stop_names) > max_stops:
+        # Apply limit at the stop name level (only if not using very close stops)
+        if not very_close_stops and len(sorted_stop_names) > max_stops:
             logger.info("Limiting location-based results from %d to %d unique stop names",
                         len(sorted_stop_names), max_stops)
             sorted_stop_names = sorted_stop_names[:max_stops]
@@ -310,7 +354,7 @@ class ClaudeQueryResolver:
         # Reconstruct CSV, including all stop IDs for each selected stop name
         filtered_lines = [header]
         for stop_name in sorted_stop_names:
-            for distance, row in stops_by_name[stop_name]:
+            for distance, row in stops_to_use[stop_name]:
                 filtered_lines.append(",".join([
                     row["stop_id"],
                     row["stop_name"],
@@ -321,6 +365,39 @@ class ClaudeQueryResolver:
                 ]))
 
         return "\n".join(filtered_lines)
+
+    @staticmethod
+    def _normalize_query_for_matching(query: str) -> str:
+        """
+        Normalize query text to handle common variations:
+        - Remove ordinal suffixes (23rd -> 23, 1st -> 1)
+        - Convert spelled-out numbers to digits (fourth -> 4, twenty-third -> 23)
+        """
+        # Map of spelled-out numbers to digits
+        number_words = {
+            "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5",
+            "sixth": "6", "seventh": "7", "eighth": "8", "ninth": "9", "tenth": "10",
+            "eleventh": "11", "twelfth": "12", "thirteenth": "13", "fourteenth": "14",
+            "fifteenth": "15", "sixteenth": "16", "seventeenth": "17", "eighteenth": "18",
+            "nineteenth": "19", "twentieth": "20", "twenty-first": "21", "twenty-second": "22",
+            "twenty-third": "23", "twenty-fourth": "24", "twenty-fifth": "25",
+            "thirtieth": "30", "fortieth": "40", "fiftieth": "50", "sixtieth": "60",
+            "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+            "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"
+        }
+
+        query_lower = query.lower()
+
+        # Replace spelled-out numbers with digits
+        for word, digit in number_words.items():
+            # Use word boundaries to avoid partial replacements
+            query_lower = re.sub(r'\b' + word + r'\b', digit, query_lower)
+
+        # Remove ordinal suffixes: 23rd -> 23, 1st -> 1, 2nd -> 2, 3rd -> 3
+        # Pattern: digit(s) followed by st/nd/rd/th
+        query_lower = re.sub(r'(\d+)(?:st|nd|rd|th)\b', r'\1', query_lower)
+
+        return query_lower
 
     def _filter_stops_by_query(self, query: str, max_stops: int = 4) -> str:
         """
@@ -342,9 +419,9 @@ class ClaudeQueryResolver:
         # Keep header
         header = lines[0]
 
-        # Normalize query for matching
-        query_lower = query.lower()
-        query_tokens = set(query_lower.split())
+        # Normalize query for matching (handle ordinals and spelled-out numbers)
+        query_normalized = self._normalize_query_for_matching(query)
+        query_tokens = set(query_normalized.split())
 
         # Extract key words that might be station names
         # Remove common words that are unlikely to be station names
@@ -354,7 +431,7 @@ class ClaudeQueryResolver:
         search_tokens = query_tokens - stop_words
 
         # Parse and filter data rows, tracking match quality per stop name
-        # Match quality: 1 = exact substring, 2 = token match, 3 = numeric match
+        # Match quality: 1 = number + word match, 2 = exact substring, 3 = token match
         reader = csv.DictReader(lines)
         matched_stops_by_name = {}  # stop_name -> (quality, [rows])
 
@@ -362,22 +439,30 @@ class ClaudeQueryResolver:
             try:
                 stop_name = row["stop_name"]
                 stop_name_lower = stop_name.lower()
+                stop_name_tokens = set(stop_name_lower.split())
 
                 # Determine match quality for this stop name
                 quality = None
 
-                # Strategy 1: Exact substring match (highest priority)
-                if any(token in stop_name_lower for token in search_tokens if len(token) > 2):
-                    quality = 1
-                # Strategy 2: Check if any word in stop name appears in query
-                elif set(stop_name_lower.split()) & search_tokens:
+                # Strategy 1: Number + word match (highest priority for numbered streets)
+                # Extract numbers from both query and stop name
+                query_numbers = set(re.findall(r'\d+', query_normalized))
+                stop_numbers = set(re.findall(r'\d+', stop_name_lower))
+
+                if query_numbers and stop_numbers and query_numbers & stop_numbers:
+                    # Check if there's also a word match (e.g., "st" matches "St")
+                    if search_tokens & stop_name_tokens:
+                        quality = 1  # Best match: number + word
+                    else:
+                        quality = 3  # Just number match
+
+                # Strategy 2: Exact substring match (high priority for text-based stations)
+                elif any(token in stop_name_lower for token in search_tokens if len(token) > 2):
                     quality = 2
-                # Strategy 3: Fuzzy match on numbers (e.g., "14th street", "14 st")
-                else:
-                    query_numbers = set(re.findall(r'\d+', query_lower))
-                    stop_numbers = set(re.findall(r'\d+', stop_name_lower))
-                    if query_numbers and stop_numbers and query_numbers & stop_numbers:
-                        quality = 3
+
+                # Strategy 3: Token match (any word in stop name appears in query)
+                elif stop_name_tokens & search_tokens:
+                    quality = 4
 
                 # If this stop name matched, add it to our collection
                 if quality is not None:
