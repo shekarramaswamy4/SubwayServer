@@ -218,8 +218,19 @@ async def _handle_update(update: Dict[str, Any]) -> None:
 
 async def _handle_command(chat_id: int, command: str) -> None:
     """Handle slash commands."""
-    if command == "/hello":
-        await _send_telegram_message(chat_id, "Hello! 👋")
+    if command == "/hello" or command == "/start":
+        welcome_message = (
+            "🚇 Welcome to the NYC Subway Bot!\n\n"
+            "I help you find upcoming trains at NYC subway stations.\n\n"
+            "How to use:\n"
+            "• Type any station name (e.g., \"Union Square\", \"Times Square\")\n"
+            "• Tap 🏠 Home to set your home station for quick access\n"
+            "• Share your location to find nearby trains\n"
+            "• Tap 🔄 Repeat to refresh your last query\n\n"
+            "Try it now! Type a station name or tap 🏠 Home below."
+        )
+        await _send_telegram_message(chat_id, welcome_message)
+        return
     elif command == "/home":
         # Check if user has a saved home location
         home_location = _get_home_location(chat_id)
@@ -248,15 +259,6 @@ async def _handle_command(chat_id: int, command: str) -> None:
                 "You haven't set a home location yet. Share your location below to save it as your home.\n\n"
                 "Next time you tap 'Home', I'll show you trains near this location!"
             )
-    elif command == "/start":
-        # Add location request button for /start command
-        await _send_telegram_message_with_location_button(
-            chat_id,
-            "🚇 Welcome to the NYC Subway Bot!\n\n"
-            "I can help you find train times at any NYC subway station.\n\n"
-            "📍 Share your location to find nearby stations, or just type a station name!"
-        )
-        return
     elif command == "/repeat":
         last_query = _last_queries.get(chat_id)
         if last_query:
