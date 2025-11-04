@@ -26,8 +26,8 @@ _polling_task: Optional[asyncio.Task] = None
 _http_client: Optional[httpx.AsyncClient] = None
 
 # Store last query per chat for repeat functionality
-# Structure: {chat_id: {"text": str, "lat": Optional[str], "lon": Optional[str]}}
-_last_queries: Dict[int, Dict[str, Optional[str]]] = {}
+# Structure: {chat_id: str}
+_last_queries: Dict[int, str] = {}
 
 # In-memory database for storing user home locations
 # Structure: {chat_id: {"lat": str, "lon": str}}
@@ -203,12 +203,9 @@ async def _handle_update(update: Dict[str, Any]) -> None:
     lat_str = str(latitude) if latitude else None
     lon_str = str(longitude) if longitude else None
 
-    # Store last query for repeat functionality (including location if provided)
-    _last_queries[chat_id] = {
-        "text": text,
-        "lat": lat_str,
-        "lon": lon_str
-    }
+    # Store only the text query for repeat functionality (not location)
+    if text:
+        _last_queries[chat_id] = text
 
     outcome = await _handle_query(text, lat_str, lon_str)
     reply = outcome.message if outcome else "Thanks! Message received."
@@ -262,21 +259,23 @@ async def _handle_command(chat_id: int, command: str) -> None:
     elif command == "/repeat":
         last_query = _last_queries.get(chat_id)
         if last_query:
-            text = last_query.get("text", "")
-            lat = last_query.get("lat")
-            lon = last_query.get("lon")
+            logger.info("Repeating last query for chat %s: text=%s",
+                        chat_id, last_query)
 
-            logger.info("Repeating last query for chat %s: text=%s, lat=%s, lon=%s",
-                        chat_id, text, lat, lon)
+            # Send intermediate message showing what we're repeating (without buttons)
+            await _send_telegram_message_plain(
+                chat_id,
+                f"🔄 Repeating your last query: \"{last_query}\""
+            )
 
-            # Execute the same query again (with location if it was provided)
-            outcome = await _handle_query(text, lat, lon)
+            # Execute the same query again (without location)
+            outcome = await _handle_query(last_query, None, None)
             reply = outcome.message if outcome else "Thanks! Message received."
             await _send_telegram_message(chat_id, reply)
         else:
             await _send_telegram_message(
                 chat_id,
-                "No previous query to repeat. Send me a station name or location first!"
+                "No previous query to repeat. Send me a station name first!"
             )
     else:
         await _send_telegram_message(
@@ -331,6 +330,29 @@ async def _handle_callback_query(callback_query: Dict[str, Any]) -> None:
     # Handle the button action as if it were a command
     logger.info("Button clicked | chat_id=%s | data=%s", chat_id, data)
     await _handle_command(chat_id, data)
+
+
+async def _send_telegram_message_plain(chat_id: int, text: str) -> None:
+    """Send a plain message without any buttons."""
+    if _http_client is None:
+        logger.warning(
+            "Telegram HTTP client not initialized; unable to send message to chat %s.", chat_id)
+        return
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+    }
+
+    try:
+        response = await _http_client.post(
+            "/sendMessage",
+            json=payload,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.error(
+            "Failed to send Telegram message to chat %s: %s", chat_id, exc)
 
 
 async def _send_telegram_message(chat_id: int, text: str) -> None:
