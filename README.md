@@ -17,3 +17,5 @@ Users can also set their home location for quick access. They can also repeat th
 
 I built this because I wanted to play with some of Anthropic's latest APIs. This was a fun exercise in prompt engineering and formatting data in a user-friendly way. Feel free to contribute or DM me if you want any features to be added.
 
+This was almost entirely vibe-coded, so please treat it accordingly :)
+
